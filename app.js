@@ -1,4 +1,4 @@
-// app.js - Make sure the order routes are correctly mounted
+// app.js - Updated with import routes
 var createError = require('http-errors');
 var express = require('express');
 var path = require('path');
@@ -8,8 +8,9 @@ var cors = require('cors');
 
 var indexRouter = require('./routes/index');
 var usersRouter = require('./routes/users');
-var orderRouter = require('./routes/order');  // This should be correctly imported
+var orderRouter = require('./routes/order');
 var saleRouter = require('./routes/sale');
+var importRouter = require('./routes/import'); // Add import routes
 
 var app = express();
 
@@ -26,8 +27,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.use('/', indexRouter);
 app.use('/users', usersRouter);
-app.use('/order', orderRouter);  // Make sure this is using '/order' not '/orders'
+app.use('/order', orderRouter);
 app.use('/sale', saleRouter);
+app.use('/import', importRouter); // Mount import routes
   
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {
