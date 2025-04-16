@@ -182,7 +182,6 @@ exports.create_import = (req, res, next) => {
     
     const { emp_id, order_id, imp_date, status, total_price, items } = req.body;
     
-    // ກວດສອບຂໍ້ມູນທີ່ຈຳເປັນ
     if (!emp_id || !order_id || !items || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ 
             "result_code": "400", 
@@ -191,115 +190,135 @@ exports.create_import = (req, res, next) => {
     }
     
     try {
-        // ເລີ່ມການເຮັດ transaction
-        connection_final.beginTransaction(err => {
-            if (err) {
-                console.error("ຂໍ້ຜິດພາດໃນການເລີ່ມ transaction:", err);
+        // Get a connection from the pool
+        connection_final.getConnection((connectionErr, connection) => {
+            if (connectionErr) {
+                console.error("ຂໍ້ຜິດພາດໃນການເຊື່ອມຕໍ່:", connectionErr);
                 return res.status(500).json({ 
                     "result_code": "500", 
-                    "result": "ຂໍ້ຜິດພາດໃນການເລີ່ມ transaction" 
+                    "result": "ຂໍ້ຜິດພາດໃນການເຊື່ອມຕໍ່" 
                 });
             }
-            
-            // 1. ເພີ່ມຂໍ້ມູນການນຳເຂົ້າລົງໃນຕາຕະລາງ import
-            const importQuery = `
-                INSERT INTO import (emp_id, order_id, imp_date, total_price, status) 
-                VALUES (?, ?, ?, ?, ?)
-            `;
-            
-            connection_final.query(
-                importQuery, 
-                [emp_id, order_id, imp_date || new Date(), total_price, status || 'Completed'], 
-                (err, importResult) => {
-                    if (err) {
-                        return connection_final.rollback(() => {
-                            console.error("ຂໍ້ຜິດພາດໃນການເພີ່ມຂໍ້ມູນການນຳເຂົ້າ:", err);
-                            res.status(500).json({ 
-                                "result_code": "500", 
-                                "result": "ຂໍ້ຜິດພາດໃນການເພີ່ມຂໍ້ມູນການນຳເຂົ້າ",
-                                "error": err.message
-                            });
-                        });
-                    }
-                    
-                    const impId = importResult.insertId;
-                    
-                    // 2. ເພີ່ມລາຍລະອຽດການນຳເຂົ້າ
-                    const detailValues = items.map(item => [
-                        impId, 
-                        item.proid, 
-                        item.qty, 
-                        item.cost_price
-                    ]);
-                    
-                    const detailQuery = `
-                        INSERT INTO import_detail (imp_id, pro_id, qty, cost_price) 
-                        VALUES ?
-                    `;
-                    
-                    connection_final.query(detailQuery, [detailValues], (err) => {
+        
+            // Begin transaction using the acquired connection
+            connection.beginTransaction(err => {
+                if (err) {
+                    connection.release(); // Release the connection back to pool
+                    console.error("ຂໍ້ຜິດພາດໃນການເລີ່ມ transaction:", err);
+                    return res.status(500).json({ 
+                        "result_code": "500", 
+                        "result": "ຂໍ້ຜິດພາດໃນການເລີ່ມ transaction" 
+                    });
+                }
+                
+                // 1. ເພີ່ມຂໍ້ມູນການນຳເຂົ້າລົງໃນຕາຕະລາງ import
+                const importQuery = `
+                    INSERT INTO import (emp_id, order_id, imp_date, total_price, status) 
+                    VALUES (?, ?, ?, ?, ?)
+                `;
+                
+                connection.query(
+                    importQuery, 
+                    [emp_id, order_id, imp_date || new Date(), total_price, status || 'Completed'], 
+                    (err, importResult) => {
                         if (err) {
-                            return connection_final.rollback(() => {
-                                console.error("ຂໍ້ຜິດພາດໃນການເພີ່ມລາຍລະອຽດການນຳເຂົ້າ:", err);
+                            return connection.rollback(() => {
+                                connection.release(); // Release the connection back to pool
+                                console.error("ຂໍ້ຜິດພາດໃນການເພີ່ມຂໍ້ມູນການນຳເຂົ້າ:", err);
                                 res.status(500).json({ 
                                     "result_code": "500", 
-                                    "result": "ຂໍ້ຜິດພາດໃນການເພີ່ມລາຍລະອຽດການນຳເຂົ້າ",
+                                    "result": "ຂໍ້ຜິດພາດໃນການເພີ່ມຂໍ້ມູນການນຳເຂົ້າ",
                                     "error": err.message
                                 });
                             });
                         }
                         
-                        // 3. ອັບເດດຈຳນວນສິນຄ້າໃນສາງ
-                        const updateStockPromises = items.map(item => {
-                            return new Promise((resolve, reject) => {
-                                const updateQuery = `
-                                    UPDATE products 
-                                    SET qty = qty + ? 
-                                    WHERE proid = ?
-                                `;
-                                
-                                connection_final.query(updateQuery, [item.qty, item.proid], (err) => {
-                                    if (err) reject(err);
-                                    else resolve();
-                                });
-                            });
-                        });
+                        const impId = importResult.insertId;
                         
-                        Promise.all(updateStockPromises)
-                            .then(() => {
-                                // ຢືນຢັນການເຮັດ transaction
-                                connection_final.commit(err => {
-                                    if (err) {
-                                        return connection_final.rollback(() => {
-                                            console.error("ຂໍ້ຜິດພາດໃນການຢືນຢັນການເຮັດ transaction:", err);
-                                            res.status(500).json({ 
-                                                "result_code": "500", 
-                                                "result": "ຂໍ້ຜິດພາດໃນການຢືນຢັນການເຮັດ transaction" 
-                                            });
-                                        });
-                                    }
-                                    
-                                    // ສົ່ງຄຳຕອບກັບຄືນ
-                                    res.status(200).json({
-                                        "result_code": "200",
-                                        "result": "ສ້າງການນຳເຂົ້າສຳເລັດແລ້ວ",
-                                        "imp_id": impId
-                                    });
-                                });
-                            })
-                            .catch(err => {
-                                connection_final.rollback(() => {
-                                    console.error("ຂໍ້ຜິດພາດໃນການອັບເດດຈຳນວນສິນຄ້າ:", err);
+                        // 2. ເພີ່ມລາຍລະອຽດການນຳເຂົ້າ
+                        const detailValues = items.map(item => [
+                            impId, 
+                            item.proid, 
+                            item.qty, 
+                            item.cost_price
+                        ]);
+                        
+                        const detailQuery = `
+                            INSERT INTO import_detail (imp_id, pro_id, qty, cost_price) 
+                            VALUES ?
+                        `;
+                        
+                        connection.query(detailQuery, [detailValues], (err) => {
+                            if (err) {
+                                return connection.rollback(() => {
+                                    connection.release(); // Release the connection back to pool
+                                    console.error("ຂໍ້ຜິດພາດໃນການເພີ່ມລາຍລະອຽດການນຳເຂົ້າ:", err);
                                     res.status(500).json({ 
                                         "result_code": "500", 
-                                        "result": "ຂໍ້ຜິດພາດໃນການອັບເດດຈຳນວນສິນຄ້າ",
+                                        "result": "ຂໍ້ຜິດພາດໃນການເພີ່ມລາຍລະອຽດການນຳເຂົ້າ",
                                         "error": err.message
                                     });
                                 });
-                            });
-                    });
-                }
-            );
+                            }
+                            
+                            // 3. Update the stock quantities sequentially
+                            let updateIndex = 0;
+                            
+                            const updateNextStock = () => {
+                                if (updateIndex >= items.length) {
+                                    // All updates complete - commit the transaction
+                                    connection.commit((err) => {
+                                        if (err) {
+                                            return connection.rollback(() => {
+                                                connection.release();
+                                                console.error("ຂໍ້ຜິດພາດໃນການຢືນຢັນການເຮັດ transaction:", err);
+                                                res.status(500).json({ 
+                                                    "result_code": "500", 
+                                                    "result": "ຂໍ້ຜິດພາດໃນການຢືນຢັນການເຮັດ transaction" 
+                                                });
+                                            });
+                                        }
+                                        
+                                        connection.release();
+                                        res.status(200).json({
+                                            "result_code": "200",
+                                            "result": "ສ້າງການນຳເຂົ້າສຳເລັດແລ້ວ",
+                                            "imp_id": impId
+                                        });
+                                    });
+                                    return;
+                                }
+                                
+                                const item = items[updateIndex];
+                                
+                                connection.query(
+                                    "UPDATE products SET qty = qty + ? WHERE proid = ?", 
+                                    [item.qty, item.proid], 
+                                    (err) => {
+                                        if (err) {
+                                            return connection.rollback(() => {
+                                                connection.release();
+                                                console.error("ຂໍ້ຜິດພາດໃນການອັບເດດຈຳນວນສິນຄ້າ:", err);
+                                                res.status(500).json({ 
+                                                    "result_code": "500", 
+                                                    "result": "ຂໍ້ຜິດພາດໃນການອັບເດດຈຳນວນສິນຄ້າ",
+                                                    "error": err.message
+                                                });
+                                            });
+                                        }
+                                        
+                                        updateIndex++;
+                                        updateNextStock();
+                                    }
+                                );
+                            };
+                            
+                            // Start the stock update chain
+                            updateNextStock();
+                        });
+                    }
+                );
+            });
         });
     } catch (error) {
         console.error("ຂໍ້ຜິດພາດຂອງເຊີບເວີ:", error);

@@ -13,6 +13,8 @@ const pool = mysql.createPool({
   waitForConnections: true, // Wait for connections to be available
 });
 
+pool.query = pool.query.bind(pool);
+
 // Test the pool connection
 pool.getConnection((err, connection) => {
   if (err) {
@@ -47,4 +49,8 @@ pool.on('error', (err) => {
 });
 
 // Export the pool instead of a single connection
-module.exports = pool;
+module.exports = {
+  pool: pool,
+  query: (sql, params, callback) => pool.query(sql, params, callback),
+  getConnection: (callback) => pool.getConnection(callback)
+};
