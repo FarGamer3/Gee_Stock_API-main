@@ -11,5 +11,13 @@ router.get('/Pending/Orders', api_import.get_pending_orders);
 router.post('/Order/Products', api_import.get_order_products);
 router.put('/Update/Status', api_import.update_import_status);
 router.delete('/Delete/Import', api_import.delete_import);
+router.post('/test-import', (req, res) => {
+    console.log('Received test import data:', req.body);
+    res.status(200).json({
+      result_code: "200",
+      result: "Test successful - data received",
+      data_received: req.body
+    });
+  });
 
 module.exports = router;
