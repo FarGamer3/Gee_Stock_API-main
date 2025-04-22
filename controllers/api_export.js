@@ -97,6 +97,7 @@ exports.select_export_details = (req, res, next) => {
         });
     }
 };
+
 /**
  * ສ້າງການນຳອອກສິນຄ້າໃໝ່
  */
@@ -166,10 +167,10 @@ exports.create_export = (req, res, next) => {
                     
                     items.forEach(item => {
                         // ກວດສອບ property ຂອງແຕ່ລະລາຍການ
-                        const productId = item.id || item.proid;
-                        const quantity = item.exportQuantity || item.qty || 1;
-                        const location = item.exportLocation || item.location || '';
-                        const reason = item.exportReason || item.reason || 'ບໍ່ໄດ້ລະບຸສາເຫດ';
+                        const productId = item.proid || item.id;
+                        const quantity = item.qty || item.exportQuantity || 1;
+                        const location = item.location || item.exportLocation || 'ບໍ່ລະບຸ';
+                        const reason = item.reason || item.exportReason || 'ບໍ່ໄດ້ລະບຸສາເຫດ';
                         
                         if (!productId) {
                             return connection.rollback(() => {
@@ -220,8 +221,8 @@ exports.create_export = (req, res, next) => {
                         // 4. ປັບປຸງຈຳນວນສິນຄ້າໃນສາງ
                         const updatePromises = items.map(item => {
                             return new Promise((resolve, reject) => {
-                                const productId = item.id || item.proid;
-                                const quantity = item.exportQuantity || item.qty || 1;
+                                const productId = item.proid || item.id;
+                                const quantity = item.qty || item.exportQuantity || 1;
                                 
                                 // ດຶງຂໍ້ມູນຈຳນວນສິນຄ້າປັດຈຸບັນ
                                 connection.query(
@@ -305,6 +306,7 @@ exports.create_export = (req, res, next) => {
         });
     }
 };
+
 /**
  * ອັບເດດສະຖານະການນຳອອກສິນຄ້າ
  */
