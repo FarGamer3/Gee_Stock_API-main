@@ -143,15 +143,7 @@ exports.create_export = (req, res, next) => {
         // ເລື່ອນຄ່າທີ່ຈຳເປັນຈາກ req.body
         const { emp_id, export_date, items } = req.body;
 
-        // Validate all required fields are present and have correct data types
-        console.log("Validation check:", {
-            emp_id_type: typeof emp_id,
-            emp_id_value: emp_id,
-            items_exists: !!items,
-            items_is_array: Array.isArray(items),
-            items_length: items ? items.length : 0
-        });
-        
+        // Validate all required fields
         if (!emp_id || !items || !Array.isArray(items) || items.length === 0) {
             return res.status(400).json({ 
                 "result_code": "400", 
@@ -161,21 +153,8 @@ exports.create_export = (req, res, next) => {
         
         // ໃຊ້ວັນທີທີ່ສົ່ງມາ ຫຼື ວັນທີປັດຈຸບັນ
         const formattedDate = export_date ? export_date : new Date().toISOString().split('T')[0];
-        console.log("Using formatted date:", formattedDate);
         
-        // Verify item data
-        const itemsDebugInfo = items.map(item => ({
-            id: item.id || item.proid,
-            id_type: typeof (item.id || item.proid),
-            qty: item.exportQuantity || item.qty,
-            qty_type: typeof (item.exportQuantity || item.qty),
-            zone_id: item.zone_id,
-            zone_id_type: typeof item.zone_id,
-            reason: item.exportReason || item.reason
-        }));
-        console.log("Items debug info:", JSON.stringify(itemsDebugInfo));
-        
-        // Check for database connection
+        // Check database connection
         if (!connection_final || !connection_final.pool) {
             console.error("Database connection not available!");
             return res.status(500).json({
@@ -184,7 +163,7 @@ exports.create_export = (req, res, next) => {
             });
         }
         
-        // ໃຊ້ການເຮັດວຽກກັບຖານຂໍ້ມູນແບບ Transaction ເພື່ອຮັບປະກັນຄວາມຖືກຕ້ອງຂອງຂໍ້ມູນ
+        // ໃຊ້ transaction
         connection_final.pool.getConnection((err, connection) => {
             if (err) {
                 console.error("ຂໍ້ຜິດພາດໃນການເຊື່ອມຕໍ່ຖານຂໍ້ມູນ:", err);
@@ -195,198 +174,144 @@ exports.create_export = (req, res, next) => {
                 });
             }
             
-            connection.beginTransaction((err) => {
+            // First, check if zone_id column exists
+            connection.query("SHOW COLUMNS FROM export_detail LIKE 'zone_id'", (err, columns) => {
                 if (err) {
                     connection.release();
-                    console.error("ຂໍ້ຜິດພາດໃນການເລີ່ມ transaction:", err);
+                    console.error("ຂໍ້ຜິດພາດໃນການກວດສອບໂຄງສ້າງຕາຕະລາງ:", err);
                     return res.status(500).json({ 
                         "result_code": "500", 
-                        "result": "ຂໍ້ຜິດພາດໃນການເລີ່ມ transaction",
+                        "result": "ຂໍ້ຜິດພາດໃນການກວດສອບໂຄງສ້າງຕາຕະລາງ",
                         "error": err.message
                     });
                 }
                 
-                // 1. ບັນທຶກຂໍ້ມູນໃນຕາຕະລາງ export
-                const exportQuery = `
-                    INSERT INTO export (emp_id, exp_date, status) 
-                    VALUES (?, ?, 'ລໍຖ້າອະນຸມັດ')
-                `;
+                // Check if zone_id column exists
+                const zoneIdExists = columns.length > 0;
                 
-                console.log("Running export insert query:", exportQuery, [emp_id, formattedDate]);
-                
-                connection.query(exportQuery, [emp_id, formattedDate], (err, exportResult) => {
+                // Begin transaction
+                connection.beginTransaction((err) => {
                     if (err) {
-                        return connection.rollback(() => {
-                            connection.release();
-                            console.error("ຂໍ້ຜິດພາດໃນການເພີ່ມຂໍ້ມູນການນຳອອກສິນຄ້າ:", err);
-                            res.status(500).json({ 
-                                "result_code": "500", 
-                                "result": "ຂໍ້ຜິດພາດໃນການເພີ່ມຂໍ້ມູນການນຳອອກສິນຄ້າ",
-                                "error": err.message
-                            });
+                        connection.release();
+                        console.error("ຂໍ້ຜິດພາດໃນການເລີ່ມ transaction:", err);
+                        return res.status(500).json({ 
+                            "result_code": "500", 
+                            "result": "ຂໍ້ຜິດພາດໃນການເລີ່ມ transaction",
+                            "error": err.message
                         });
                     }
                     
-                    const exportId = exportResult.insertId;
-                    console.log("Export created successfully with ID:", exportId);
-                    
-                    // 2. ບັນທຶກລາຍລະອຽດການນຳອອກສິນຄ້າ
-                    const insertDetails = [];
-                    const values = [];
-                    
-                    try {
-                        items.forEach((item, index) => {
-                            // ກວດສອບ property ຂອງແຕ່ລະລາຍການ
-                            const productId = parseInt(item.proid || item.id || 0);
-                            const quantity = parseInt(item.qty || item.exportQuantity || 1);
-                            const zoneId = parseInt(item.zone_id || 1); // ໃຊ້ zone_id ເປັນຫຼັກ
-                            const reason = item.reason || item.exportReason || 'ບໍ່ໄດ້ລະບຸສາເຫດ';
-                            
-                            console.log(`Item ${index} params: productId=${productId}, quantity=${quantity}, zoneId=${zoneId}, reason=${reason}`);
-                            
-                            if (!productId || isNaN(productId)) {
-                                throw new Error(`ລາຍການທີ ${index + 1} ບໍ່ມີລະຫັດສິນຄ້າທີ່ຖືກຕ້ອງ`);
-                            }
-                            
-                            // ສ້າງ parameter placeholders ສຳລັບແຕ່ລະລາຍການ
-                            insertDetails.push("(?, ?, ?, ?, ?)");
-                            values.push(exportId, productId, quantity, zoneId, reason);
-                        });
-                    } catch (itemError) {
-                        return connection.rollback(() => {
-                            connection.release();
-                            console.error("ຂໍ້ຜິດພາດໃນການກະກຽມຂໍ້ມູນລາຍລະອຽດ:", itemError);
-                            res.status(400).json({ 
-                                "result_code": "400", 
-                                "result": itemError.message
-                            });
-                        });
-                    }
-                    
-                    if (insertDetails.length === 0) {
-                        return connection.rollback(() => {
-                            connection.release();
-                            console.error("ຂໍ້ຜິດພາດ: ບໍ່ມີລາຍລະອຽດສິນຄ້າທີ່ຖືກຕ້ອງ");
-                            res.status(400).json({ 
-                                "result_code": "400", 
-                                "result": "ຂໍ້ຜິດພາດ: ບໍ່ມີລາຍລະອຽດສິນຄ້າທີ່ຖືກຕ້ອງ"
-                            });
-                        });
-                    }
-                    
-                    // 3. ເພີ່ມລາຍລະອຽດການນຳອອກສິນຄ້າທັງໝົດໃນຄຳສັ່ງດຽວ
-                    const detailsQuery = `
-                        INSERT INTO export_detail (exp_id, proid, qty, zone_id, reason) 
-                        VALUES ${insertDetails.join(',')}
+                    // 1. ບັນທຶກຂໍ້ມູນໃນຕາຕະລາງ export
+                    const exportQuery = `
+                        INSERT INTO export (emp_id, exp_date, status) 
+                        VALUES (?, ?, 'ລໍຖ້າອະນຸມັດ')
                     `;
                     
-                    console.log("Running export detail query:", detailsQuery);
-                    console.log("Export detail values:", values);
-                    
-                    connection.query(detailsQuery, values, (err, detailsResult) => {
+                    connection.query(exportQuery, [emp_id, formattedDate], (err, exportResult) => {
                         if (err) {
                             return connection.rollback(() => {
                                 connection.release();
-                                console.error("ຂໍ້ຜິດພາດໃນການເພີ່ມລາຍລະອຽດການນຳອອກສິນຄ້າ:", err);
+                                console.error("ຂໍ້ຜິດພາດໃນການເພີ່ມຂໍ້ມູນການນຳອອກສິນຄ້າ:", err);
                                 res.status(500).json({ 
                                     "result_code": "500", 
-                                    "result": "ຂໍ້ຜິດພາດໃນການເພີ່ມລາຍລະອຽດການນຳອອກສິນຄ້າ",
+                                    "result": "ຂໍ້ຜິດພາດໃນການເພີ່ມຂໍ້ມູນການນຳອອກສິນຄ້າ",
                                     "error": err.message
                                 });
                             });
                         }
                         
-                        console.log("Export details inserted successfully");
+                        const exportId = exportResult.insertId;
+                        console.log("Export created successfully with ID:", exportId);
                         
-                        // 4. ປັບປຸງຈຳນວນສິນຄ້າໃນສາງ
-                        const updatePromises = items.map(item => {
-                            return new Promise((resolve, reject) => {
-                                const productId = parseInt(item.proid || item.id || 0);
-                                const quantity = parseInt(item.qty || item.exportQuantity || 1);
+                        // 2. ບັນທຶກລາຍລະອຽດການນຳອອກສິນຄ້າ - adjust query based on schema
+                        let detailsQuery;
+                        const values = [];
+                        
+                        try {
+                            if (zoneIdExists) {
+                                // Use query with zone_id column
+                                detailsQuery = `
+                                    INSERT INTO export_detail (exp_id, proid, qty, zone_id, reason) 
+                                    VALUES ?
+                                `;
                                 
-                                if (isNaN(productId) || productId <= 0) {
-                                    console.warn(`Skipping invalid product ID: ${productId}`);
-                                    return resolve();
+                                const detailRows = items.map(item => {
+                                    const productId = parseInt(item.proid || item.id || 0);
+                                    const quantity = parseInt(item.qty || item.exportQuantity || 1);
+                                    const zoneId = parseInt(item.zone_id || 1);
+                                    const reason = item.reason || item.exportReason || 'ບໍ່ໄດ້ລະບຸສາເຫດ';
+                                    
+                                    return [exportId, productId, quantity, zoneId, reason];
+                                });
+                                
+                                if (detailRows.length === 0) {
+                                    throw new Error("ບໍ່ມີລາຍລະອຽດສິນຄ້າທີ່ຖືກຕ້ອງ");
                                 }
                                 
-                                console.log(`Updating stock for product ${productId}, reducing by ${quantity}`);
-                                
-                                // ດຶງຂໍ້ມູນຈຳນວນສິນຄ້າປັດຈຸບັນ
-                                connection.query(
-                                    "SELECT qty FROM products WHERE proid = ?", 
-                                    [productId], 
-                                    (err, results) => {
-                                        if (err) {
-                                            console.error(`Error getting current quantity for product ${productId}:`, err);
-                                            return reject(err);
-                                        }
-                                        
-                                        if (results.length === 0) {
-                                            console.warn(`Product with ID ${productId} not found`);
-                                            return resolve();
-                                        }
-                                        
-                                        const currentQty = parseInt(results[0].qty || 0);
-                                        // ກັນບໍ່ໃຫ້ຈຳນວນຕິດລົບ
-                                        const newQty = Math.max(0, currentQty - quantity);
-                                        
-                                        console.log(`Product ${productId}: current qty=${currentQty}, new qty=${newQty}`);
-                                        
-                                        // ອັບເດດຈຳນວນສິນຄ້າ
-                                        connection.query(
-                                            "UPDATE products SET qty = ? WHERE proid = ?", 
-                                            [newQty, productId], 
-                                            (err, updateResult) => {
-                                                if (err) {
-                                                    console.error(`Error updating quantity for product ${productId}:`, err);
-                                                    return reject(err);
-                                                }
-                                                
-                                                console.log(`Updated quantity for product ${productId}, affected rows: ${updateResult.affectedRows}`);
-                                                resolve();
-                                            }
-                                        );
-                                    }
-                                );
-                            });
-                        });
-                        
-                        Promise.all(updatePromises)
-                            .then(() => {
-                                // ຖ້າທຸກຢ່າງສຳເລັດ, ຍອມຮັບການປ່ຽນແປງ (commit)
-                                connection.commit(err => {
+                                // Use bulk insert with array of arrays
+                                connection.query(detailsQuery, [detailRows], (err, detailsResult) => {
                                     if (err) {
                                         return connection.rollback(() => {
                                             connection.release();
-                                            console.error("ຂໍ້ຜິດພາດໃນການ commit:", err);
+                                            console.error("ຂໍ້ຜິດພາດໃນການເພີ່ມລາຍລະອຽດການນຳອອກສິນຄ້າ:", err);
                                             res.status(500).json({ 
                                                 "result_code": "500", 
-                                                "result": "ຂໍ້ຜິດພາດໃນການບັນທຶກຂໍ້ມູນ",
+                                                "result": "ຂໍ້ຜິດພາດໃນການເພີ່ມລາຍລະອຽດການນຳອອກສິນຄ້າ",
                                                 "error": err.message
                                             });
                                         });
                                     }
                                     
-                                    connection.release();
-                                    console.log("Transaction committed successfully, export created with ID:", exportId);
-                                    res.status(200).json({
-                                        "result_code": "200",
-                                        "result": "ສ້າງການນຳອອກສິນຄ້າສຳເລັດແລ້ວ",
-                                        "export_id": exportId
-                                    });
+                                    // Update inventory quantities and complete transaction
+                                    completeExport(connection, items, exportId, res);
                                 });
-                            })
-                            .catch(error => {
-                                return connection.rollback(() => {
-                                    connection.release();
-                                    console.error("ຂໍ້ຜິດພາດໃນການປັບປຸງຈຳນວນສິນຄ້າ:", error);
-                                    res.status(500).json({ 
-                                        "result_code": "500", 
-                                        "result": "ຂໍ້ຜິດພາດໃນການປັບປຸງຈຳນວນສິນຄ້າ",
-                                        "error": error.message
-                                    });
+                            } else {
+                                // Use alternative query without zone_id column
+                                detailsQuery = `
+                                    INSERT INTO export_detail (exp_id, proid, qty, reason) 
+                                    VALUES ?
+                                `;
+                                
+                                const detailRows = items.map(item => {
+                                    const productId = parseInt(item.proid || item.id || 0);
+                                    const quantity = parseInt(item.qty || item.exportQuantity || 1);
+                                    const reason = item.reason || item.exportReason || 'ບໍ່ໄດ້ລະບຸສາເຫດ';
+                                    
+                                    return [exportId, productId, quantity, reason];
+                                });
+                                
+                                if (detailRows.length === 0) {
+                                    throw new Error("ບໍ່ມີລາຍລະອຽດສິນຄ້າທີ່ຖືກຕ້ອງ");
+                                }
+                                
+                                // Use bulk insert with array of arrays
+                                connection.query(detailsQuery, [detailRows], (err, detailsResult) => {
+                                    if (err) {
+                                        return connection.rollback(() => {
+                                            connection.release();
+                                            console.error("ຂໍ້ຜິດພາດໃນການເພີ່ມລາຍລະອຽດການນຳອອກສິນຄ້າ:", err);
+                                            res.status(500).json({ 
+                                                "result_code": "500", 
+                                                "result": "ຂໍ້ຜິດພາດໃນການເພີ່ມລາຍລະອຽດການນຳອອກສິນຄ້າ",
+                                                "error": err.message
+                                            });
+                                        });
+                                    }
+                                    
+                                    // Update inventory quantities and complete transaction
+                                    completeExport(connection, items, exportId, res);
+                                });
+                            }
+                        } catch (itemError) {
+                            return connection.rollback(() => {
+                                connection.release();
+                                console.error("ຂໍ້ຜິດພາດໃນການກະກຽມຂໍ້ມູນລາຍລະອຽດ:", itemError);
+                                res.status(400).json({ 
+                                    "result_code": "400", 
+                                    "result": itemError.message
                                 });
                             });
+                        }
                     });
                 });
             });
@@ -400,6 +325,94 @@ exports.create_export = (req, res, next) => {
         });
     }
 };
+
+// Helper function to complete export transaction
+function completeExport(connection, items, exportId, res) {
+    // 4. ປັບປຸງຈຳນວນສິນຄ້າໃນສາງ
+    const updatePromises = items.map(item => {
+        return new Promise((resolve, reject) => {
+            const productId = parseInt(item.proid || item.id || 0);
+            const quantity = parseInt(item.qty || item.exportQuantity || 1);
+            
+            if (isNaN(productId) || productId <= 0) {
+                console.warn(`Skipping invalid product ID: ${productId}`);
+                return resolve();
+            }
+            
+            // ດຶງຂໍ້ມູນຈຳນວນສິນຄ້າປັດຈຸບັນ
+            connection.query(
+                "SELECT qty FROM products WHERE proid = ?", 
+                [productId], 
+                (err, results) => {
+                    if (err) {
+                        console.error(`Error getting current quantity for product ${productId}:`, err);
+                        return reject(err);
+                    }
+                    
+                    if (results.length === 0) {
+                        console.warn(`Product with ID ${productId} not found`);
+                        return resolve();
+                    }
+                    
+                    const currentQty = parseInt(results[0].qty || 0);
+                    // ກັນບໍ່ໃຫ້ຈຳນວນຕິດລົບ
+                    const newQty = Math.max(0, currentQty - quantity);
+                    
+                    // ອັບເດດຈຳນວນສິນຄ້າ
+                    connection.query(
+                        "UPDATE products SET qty = ? WHERE proid = ?", 
+                        [newQty, productId], 
+                        (err, updateResult) => {
+                            if (err) {
+                                console.error(`Error updating quantity for product ${productId}:`, err);
+                                return reject(err);
+                            }
+                            
+                            resolve();
+                        }
+                    );
+                }
+            );
+        });
+    });
+    
+    Promise.all(updatePromises)
+        .then(() => {
+            // ຖ້າທຸກຢ່າງສຳເລັດ, ຍອມຮັບການປ່ຽນແປງ (commit)
+            connection.commit(err => {
+                if (err) {
+                    return connection.rollback(() => {
+                        connection.release();
+                        console.error("ຂໍ້ຜິດພາດໃນການ commit:", err);
+                        res.status(500).json({ 
+                            "result_code": "500", 
+                            "result": "ຂໍ້ຜິດພາດໃນການບັນທຶກຂໍ້ມູນ",
+                            "error": err.message
+                        });
+                    });
+                }
+                
+                connection.release();
+                console.log("Transaction committed successfully, export created with ID:", exportId);
+                res.status(200).json({
+                    "result_code": "200",
+                    "result": "ສ້າງການນຳອອກສິນຄ້າສຳເລັດແລ້ວ",
+                    "export_id": exportId
+                });
+            });
+        })
+        .catch(error => {
+            return connection.rollback(() => {
+                connection.release();
+                console.error("ຂໍ້ຜິດພາດໃນການປັບປຸງຈຳນວນສິນຄ້າ:", error);
+                res.status(500).json({ 
+                    "result_code": "500", 
+                    "result": "ຂໍ້ຜິດພາດໃນການປັບປຸງຈຳນວນສິນຄ້າ",
+                    "error": error.message
+                });
+            });
+        });
+}
 
 /**
  * ອັບເດດສະຖານະການນຳອອກສິນຄ້າ
