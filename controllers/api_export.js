@@ -1,4 +1,4 @@
-// controllers/api_export.js
+// controllers/api_export.js - Updated to match new database structure
 const mysql = require('mysql');
 require("dotenv").config();
 const connection_final = require("../components/connection_final");
@@ -56,15 +56,14 @@ exports.select_export_details = (req, res, next) => {
     }
     
     try {
-        // Modified query to ensure product name is properly retrieved
         const query = `
             SELECT 
                 ed.exp_d_id as export_detail_id, 
                 ed.exp_id as export_id, 
                 ed.proid, 
                 ed.qty, 
-                z.zone as location,
                 ed.zone_id,
+                z.zone as location,
                 ed.reason,
                 p.ProductName, 
                 e.exp_date as export_date, 
@@ -95,19 +94,14 @@ exports.select_export_details = (req, res, next) => {
             
             // Process results to ensure all fields are properly filled
             const processedResults = results.map(item => {
-                // Make sure we have valid data
                 const productName = item.ProductName || 'ບໍ່ລະບຸຊື່ສິນຄ້າ';
                 const locationText = item.location || (item.zone_id ? `Zone ${item.zone_id}` : 'ບໍ່ລະບຸ');
                 
                 return {
                     ...item,
-                    // Ensure ProductName is available and populated
                     ProductName: productName,
-                    // Set additional name field for compatibility
                     name: productName,
-                    // If location is null, create a default from zone_id
                     location: locationText,
-                    // Add additional fields for better compatibility
                     exportQuantity: item.qty || 0,
                     exportLocation: locationText,
                     exportReason: item.reason || '',
@@ -140,7 +134,6 @@ exports.create_export = (req, res, next) => {
     console.log("ໄດ້ຮັບຄຳຂໍການນຳອອກສິນຄ້າ:", JSON.stringify(req.body));
     
     try {
-        // ເລື່ອນຄ່າທີ່ຈຳເປັນຈາກ req.body
         const { emp_id, export_date, items } = req.body;
 
         // Validate all required fields
@@ -163,7 +156,7 @@ exports.create_export = (req, res, next) => {
             });
         }
         
-        // ໃຊ້ transaction
+        // Use transaction
         connection_final.pool.getConnection((err, connection) => {
             if (err) {
                 console.error("ຂໍ້ຜິດພາດໃນການເຊື່ອມຕໍ່ຖານຂໍ້ມູນ:", err);
@@ -174,145 +167,87 @@ exports.create_export = (req, res, next) => {
                 });
             }
             
-            // First, check if zone_id column exists
-            connection.query("SHOW COLUMNS FROM export_detail LIKE 'zone_id'", (err, columns) => {
+            // Begin transaction
+            connection.beginTransaction((err) => {
                 if (err) {
                     connection.release();
-                    console.error("ຂໍ້ຜິດພາດໃນການກວດສອບໂຄງສ້າງຕາຕະລາງ:", err);
+                    console.error("ຂໍ້ຜິດພາດໃນການເລີ່ມ transaction:", err);
                     return res.status(500).json({ 
                         "result_code": "500", 
-                        "result": "ຂໍ້ຜິດພາດໃນການກວດສອບໂຄງສ້າງຕາຕະລາງ",
+                        "result": "ຂໍ້ຜິດພາດໃນການເລີ່ມ transaction",
                         "error": err.message
                     });
                 }
                 
-                // Check if zone_id column exists
-                const zoneIdExists = columns.length > 0;
+                // 1. ບັນທຶກຂໍ້ມູນໃນຕາຕະລາງ export
+                const exportQuery = `
+                    INSERT INTO export (emp_id, exp_date, status) 
+                    VALUES (?, ?, 'ລໍຖ້າອະນຸມັດ')
+                `;
                 
-                // Begin transaction
-                connection.beginTransaction((err) => {
+                connection.query(exportQuery, [emp_id, formattedDate], (err, exportResult) => {
                     if (err) {
-                        connection.release();
-                        console.error("ຂໍ້ຜິດພາດໃນການເລີ່ມ transaction:", err);
-                        return res.status(500).json({ 
-                            "result_code": "500", 
-                            "result": "ຂໍ້ຜິດພາດໃນການເລີ່ມ transaction",
-                            "error": err.message
+                        return connection.rollback(() => {
+                            connection.release();
+                            console.error("ຂໍ້ຜິດພາດໃນການເພີ່ມຂໍ້ມູນການນຳອອກສິນຄ້າ:", err);
+                            res.status(500).json({ 
+                                "result_code": "500", 
+                                "result": "ຂໍ້ຜິດພາດໃນການເພີ່ມຂໍ້ມູນການນຳອອກສິນຄ້າ",
+                                "error": err.message
+                            });
                         });
                     }
                     
-                    // 1. ບັນທຶກຂໍ້ມູນໃນຕາຕະລາງ export
-                    const exportQuery = `
-                        INSERT INTO export (emp_id, exp_date, status) 
-                        VALUES (?, ?, 'ລໍຖ້າອະນຸມັດ')
+                    const exportId = exportResult.insertId;
+                    console.log("Export created successfully with ID:", exportId);
+                    
+                    // 2. ບັນທຶກລາຍລະອຽດການນຳອອກສິນຄ້າ - use correct schema
+                    const detailsQuery = `
+                        INSERT INTO export_detail (exp_id, proid, qty, zone_id, reason) 
+                        VALUES ?
                     `;
                     
-                    connection.query(exportQuery, [emp_id, formattedDate], (err, exportResult) => {
-                        if (err) {
-                            return connection.rollback(() => {
-                                connection.release();
-                                console.error("ຂໍ້ຜິດພາດໃນການເພີ່ມຂໍ້ມູນການນຳອອກສິນຄ້າ:", err);
-                                res.status(500).json({ 
-                                    "result_code": "500", 
-                                    "result": "ຂໍ້ຜິດພາດໃນການເພີ່ມຂໍ້ມູນການນຳອອກສິນຄ້າ",
-                                    "error": err.message
-                                });
-                            });
+                    try {
+                        const detailRows = items.map(item => {
+                            const productId = parseInt(item.proid || item.id || 0);
+                            const quantity = parseInt(item.qty || item.exportQuantity || 1);
+                            const zoneId = parseInt(item.zone_id || 1);
+                            const reason = item.reason || item.exportReason || 'ບໍ່ໄດ້ລະບຸສາເຫດ';
+                            
+                            return [exportId, productId, quantity, zoneId, reason];
+                        });
+                        
+                        if (detailRows.length === 0) {
+                            throw new Error("ບໍ່ມີລາຍລະອຽດສິນຄ້າທີ່ຖືກຕ້ອງ");
                         }
                         
-                        const exportId = exportResult.insertId;
-                        console.log("Export created successfully with ID:", exportId);
-                        
-                        // 2. ບັນທຶກລາຍລະອຽດການນຳອອກສິນຄ້າ - adjust query based on schema
-                        let detailsQuery;
-                        const values = [];
-                        
-                        try {
-                            if (zoneIdExists) {
-                                // Use query with zone_id column
-                                detailsQuery = `
-                                    INSERT INTO export_detail (exp_id, proid, qty, zone_id, reason) 
-                                    VALUES ?
-                                `;
-                                
-                                const detailRows = items.map(item => {
-                                    const productId = parseInt(item.proid || item.id || 0);
-                                    const quantity = parseInt(item.qty || item.exportQuantity || 1);
-                                    const zoneId = parseInt(item.zone_id || 1);
-                                    const reason = item.reason || item.exportReason || 'ບໍ່ໄດ້ລະບຸສາເຫດ';
-                                    
-                                    return [exportId, productId, quantity, zoneId, reason];
-                                });
-                                
-                                if (detailRows.length === 0) {
-                                    throw new Error("ບໍ່ມີລາຍລະອຽດສິນຄ້າທີ່ຖືກຕ້ອງ");
-                                }
-                                
-                                // Use bulk insert with array of arrays
-                                connection.query(detailsQuery, [detailRows], (err, detailsResult) => {
-                                    if (err) {
-                                        return connection.rollback(() => {
-                                            connection.release();
-                                            console.error("ຂໍ້ຜິດພາດໃນການເພີ່ມລາຍລະອຽດການນຳອອກສິນຄ້າ:", err);
-                                            res.status(500).json({ 
-                                                "result_code": "500", 
-                                                "result": "ຂໍ້ຜິດພາດໃນການເພີ່ມລາຍລະອຽດການນຳອອກສິນຄ້າ",
-                                                "error": err.message
-                                            });
-                                        });
-                                    }
-                                    
-                                    // Update inventory quantities and complete transaction
-                                    completeExport(connection, items, exportId, res);
-                                });
-                            } else {
-                                // Use alternative query without zone_id column
-                                detailsQuery = `
-                                    INSERT INTO export_detail (exp_id, proid, qty, reason) 
-                                    VALUES ?
-                                `;
-                                
-                                const detailRows = items.map(item => {
-                                    const productId = parseInt(item.proid || item.id || 0);
-                                    const quantity = parseInt(item.qty || item.exportQuantity || 1);
-                                    const reason = item.reason || item.exportReason || 'ບໍ່ໄດ້ລະບຸສາເຫດ';
-                                    
-                                    return [exportId, productId, quantity, reason];
-                                });
-                                
-                                if (detailRows.length === 0) {
-                                    throw new Error("ບໍ່ມີລາຍລະອຽດສິນຄ້າທີ່ຖືກຕ້ອງ");
-                                }
-                                
-                                // Use bulk insert with array of arrays
-                                connection.query(detailsQuery, [detailRows], (err, detailsResult) => {
-                                    if (err) {
-                                        return connection.rollback(() => {
-                                            connection.release();
-                                            console.error("ຂໍ້ຜິດພາດໃນການເພີ່ມລາຍລະອຽດການນຳອອກສິນຄ້າ:", err);
-                                            res.status(500).json({ 
-                                                "result_code": "500", 
-                                                "result": "ຂໍ້ຜິດພາດໃນການເພີ່ມລາຍລະອຽດການນຳອອກສິນຄ້າ",
-                                                "error": err.message
-                                            });
-                                        });
-                                    }
-                                    
-                                    // Update inventory quantities and complete transaction
-                                    completeExport(connection, items, exportId, res);
+                        // Use bulk insert with array of arrays
+                        connection.query(detailsQuery, [detailRows], (err, detailsResult) => {
+                            if (err) {
+                                return connection.rollback(() => {
+                                    connection.release();
+                                    console.error("ຂໍ້ຜິດພາດໃນການເພີ່ມລາຍລະອຽດການນຳອອກສິນຄ້າ:", err);
+                                    res.status(500).json({ 
+                                        "result_code": "500", 
+                                        "result": "ຂໍ້ຜິດພາດໃນການເພີ່ມລາຍລະອຽດການນຳອອກສິນຄ້າ",
+                                        "error": err.message
+                                    });
                                 });
                             }
-                        } catch (itemError) {
-                            return connection.rollback(() => {
-                                connection.release();
-                                console.error("ຂໍ້ຜິດພາດໃນການກະກຽມຂໍ້ມູນລາຍລະອຽດ:", itemError);
-                                res.status(400).json({ 
-                                    "result_code": "400", 
-                                    "result": itemError.message
-                                });
+                            
+                            // Update inventory quantities and complete transaction
+                            completeExport(connection, items, exportId, res);
+                        });
+                    } catch (itemError) {
+                        return connection.rollback(() => {
+                            connection.release();
+                            console.error("ຂໍ້ຜິດພາດໃນການກະກຽມຂໍ້ມູນລາຍລະອຽດ:", itemError);
+                            res.status(400).json({ 
+                                "result_code": "400", 
+                                "result": itemError.message
                             });
-                        }
-                    });
+                        });
+                    }
                 });
             });
         });
@@ -328,7 +263,7 @@ exports.create_export = (req, res, next) => {
 
 // Helper function to complete export transaction
 function completeExport(connection, items, exportId, res) {
-    // 4. ປັບປຸງຈຳນວນສິນຄ້າໃນສາງ
+    // 3. ປັບປຸງຈຳນວນສິນຄ້າໃນສາງ
     const updatePromises = items.map(item => {
         return new Promise((resolve, reject) => {
             const productId = parseInt(item.proid || item.id || 0);
@@ -521,7 +456,7 @@ exports.delete_export = (req, res, next) => {
                             });
                         }
                         
-                        // 1. ດຶງຂໍ້ມູລລາຍລະອຽດເພື່ອຄືນຄ່າສິນຄ້າ
+                        // 1. ດຶງຂໍ້ມູນລາຍລະອຽດເພື່ອຄືນຄ່າສິນຄ້າ
                         connection.query(
                             "SELECT proid, qty FROM export_detail WHERE exp_id = ?", 
                             [export_id], 
@@ -646,11 +581,12 @@ exports.delete_export = (req, res, next) => {
                                             });
                                         });
                                     });
-                            });
-                        });
+                            }
+                        );
                     });
-                }
-            );
+                });
+            }
+        );
     } catch (error) {
         console.error("ຂໍ້ຜິດພາດຂອງເຊີບເວີ:", error);
         res.status(500).json({ 
@@ -659,4 +595,4 @@ exports.delete_export = (req, res, next) => {
             "error": error.message
         });
     }
-};
+};  
