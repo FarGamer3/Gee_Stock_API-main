@@ -10,7 +10,7 @@ exports.insert_sales = (req, res, next) => {
     const { cus_id, emp_id, subtotal, pay, money_change, products } = req.body;
 
     // ຕວດສອບຄວາມຖືກຕ້ອງຂອງຂໍ້ມູນ
-    if (!cus_id || !emp_id || !subtotal || !pay || !money_change || !products) {
+    if (!cus_id || !emp_id || !subtotal || !pay || money_change === undefined || money_change === null || !products)  {
         return res.status(400).json({ 
             "result_code": "400", 
             "result": "Missing required parameters" 
