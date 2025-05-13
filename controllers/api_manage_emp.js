@@ -1,33 +1,10 @@
+// controllers/api_manage_emp.js - ປັບປຸງການຈັດການສິດຜູ້ໃຊ້
 const mysql = require('mysql');
 require("dotenv").config();
 const bcrypt = require("bcrypt");
 const connection_final= require("../components/connection_final");
 
-// exports.select_all_emp = (req, res, next) => {
-//     try {
-//         connection_final.query(
-//             'SELECT * FROM employee',
-//             [],
-//             (err, results, fields) => {
-//                 if (err) {
-//                     console.log("Error select data from the database", err);
-//                     return res.status(400).send();
-//                 } else {
-//                     let _allUser = results
-//                     res.status(200).json({
-//                         "result_code": "200",
-//                         "result": "Success",
-//                         "user_info": _allUser,
-//                     });
-//                 }
-//             }
-//         )
-//     } catch (err) {
-//         console.log(err);
-//         return res.status(500).send();
-//     }
-// }
-
+// ດຶງຂໍ້ມູນພະນັກງານທັງໝົດ
 exports.select_all_emp = (req, res, next) => {
     try {
         let sql = `
@@ -56,6 +33,7 @@ exports.select_all_emp = (req, res, next) => {
     }
 };
 
+// ດຶງຂໍ້ມູນພະນັກງານຕາມລະຫັດ
 exports.select_emp_with_id = (req, res, next) => {
     let _data = req.body;
     let _empID = _data.emp_id;
@@ -94,7 +72,7 @@ exports.select_emp_with_id = (req, res, next) => {
     }
 }
 
-
+// ຄົ້ນຫາພະນັກງານ
 exports.search_employee = (req, res, next) => {
     const { keyword } = req.body;
 
@@ -124,7 +102,7 @@ exports.search_employee = (req, res, next) => {
 
         const searchValue = `%${keyword}%`;
 
-        // ใส่ searchValue ทั้งหมด 11 ครั้ง ให้ตรงกับจำนวน field
+        // ໃສ່ searchValue ທັງໝົດ 11 ຄັ້ງ ໃຫ້ຕົງກັບຈຳນວນ field
         const values = new Array(11).fill(searchValue);
 
         connection_final.query(
@@ -149,10 +127,7 @@ exports.search_employee = (req, res, next) => {
     }
 };
 
-
-
-
-
+// ເພີ່ມພະນັກງານໃໝ່
 exports.insert_employee = async (req, res, next) => {
     let { 
         emp_id, emp_name, emp_lname, gender, date_of_b, 
@@ -160,15 +135,23 @@ exports.insert_employee = async (req, res, next) => {
         username, password, status, active 
     } = req.body;
 
-    // Validate required fields
+    // ກວດສອບຂໍ້ມູນທີ່ຕ້ອງການ
     if (!emp_name || !emp_lname || !gender || !date_of_b || 
         !tel || !address || !start_date || 
         !username || !password || !status || active === undefined) {
         return res.status(400).json({ "result": "All fields are required" });
     }
 
+    // ກວດສອບຄວາມຖືກຕ້ອງຂອງ status
+    const validStatuses = ['Admin', 'User1', 'User2']; // ເຈົ້າຂອງຮ້ານ, ພະນັກງານຂາຍ, ພະນັກງານສາງ
+    if (!validStatuses.includes(status)) {
+        return res.status(400).json({ 
+            "result": "Invalid status value. Must be one of: Admin, User1, User2" 
+        });
+    }
+
     try {
-        // Hash the password before storing
+        // ແຮຊລະຫັດຜ່ານກ່ອນບັນທຶກ
         const hashedPassword = await bcrypt.hash(password, 10);
 
         let sql = `INSERT INTO employee 
@@ -202,8 +185,7 @@ exports.insert_employee = async (req, res, next) => {
     }
 };
 
-
-
+// ອັບເດດຂໍ້ມູນພະນັກງານ
 exports.update_employee = async (req, res, next) => {
     let { 
         emp_id, emp_name, emp_lname, gender, date_of_b, 
@@ -211,13 +193,23 @@ exports.update_employee = async (req, res, next) => {
         username, password, status, active 
     } = req.body;
 
-    // ตรวจสอบว่ามี emp_id ไหม
+    // ກວດສອບວ່າມີ emp_id ໄຫມ
     if (!emp_id) {
         return res.status(400).json({ "result": "Employee ID is required" });
     }
 
+    // ກວດສອບຄວາມຖືກຕ້ອງຂອງ status ຖ້າມີການອັບເດດ
+    if (status) {
+        const validStatuses = ['Admin', 'User1', 'User2']; // ເຈົ້າຂອງຮ້ານ, ພະນັກງານຂາຍ, ພະນັກງານສາງ
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({ 
+                "result": "Invalid status value. Must be one of: Admin, User1, User2" 
+            });
+        }
+    }
+
     try {
-        // สร้างอาร์เรย์สำหรับค่าที่จะอัปเดต
+        // ສ້າງອາເລໃສຳລັບຄ່າທີ່ຈະອັບເດດ
         let updateFields = [];
         let values = [];
 
@@ -232,21 +224,21 @@ exports.update_employee = async (req, res, next) => {
         if (status) { updateFields.push("status = ?"); values.push(status); }
         if (active !== undefined) { updateFields.push("active = ?"); values.push(active); }
 
-        // ตรวจสอบว่ามีการอัปเดตรหัสผ่านไหม
+        // ກວດສອບວ່າມີການອັບເດດລະຫັດຜ່ານໄຫມ
         if (password) {
             const hashedPassword = await bcrypt.hash(password, 10);
             updateFields.push("password = ?");
             values.push(hashedPassword);
         }
 
-        // ถ้าไม่มีค่าที่ต้องอัปเดต ให้ส่ง error กลับ
+        // ຖ້າບໍ່ມີຄ່າທີ່ຕ້ອງອັບເດດ ໃຫ້ສົ່ງ error ກັບ
         if (updateFields.length === 0) {
             return res.status(400).json({ "result": "No fields to update" });
         }
 
-        // สร้าง SQL Update
+        // ສ້າງ SQL Update
         let sql = `UPDATE employee SET ${updateFields.join(", ")} WHERE emp_id = ?`;
-        values.push(emp_id); // ใส่ emp_id เป็นเงื่อนไข
+        values.push(emp_id); // ໃສ່ emp_id ເປັນເງື່ອນໄຂ
 
         // Execute SQL
         connection_final.query(sql, values, (err, results) => {
@@ -255,7 +247,7 @@ exports.update_employee = async (req, res, next) => {
                 return res.status(500).json({ "result": "Database Error" });
             }
 
-            // เช็คว่ามีการอัปเดตข้อมูลจริงไหม
+            // ເຊັກວ່າມີການອັບເດດຂໍ້ມູນຈິງໄຫມ
             if (results.affectedRows === 0) {
                 return res.status(404).json({ "result": "Employee not found" });
             }
@@ -273,7 +265,7 @@ exports.update_employee = async (req, res, next) => {
     }
 };
 
-
+// ລຶບພະນັກງານ
 exports.delete_employee = (req, res, next) => {
     let { emp_id } = req.body;  
 
@@ -284,35 +276,73 @@ exports.delete_employee = (req, res, next) => {
     console.log("Received emp_id:", emp_id); 
 
     try {
-        
+        // ກວດກາຜົນກະທົບກ່ອນການລຶບຂໍ້ມູນ (ເພື່ອປ້ອງກັນການລຶບບັນຊີ admin ຄົນດຽວໃນລະບົບ)
         connection_final.query(
-            'DELETE FROM employee WHERE emp_id = ?',
-            [emp_id],
-            (err, results) => {
+            'SELECT COUNT(*) as adminCount FROM employee WHERE status = "Admin" AND active = 1',
+            [],
+            (err, countResults) => {
                 if (err) {
-                    console.log("Error deleting employee", err);
+                    console.log("Error checking admin count", err);
                     return res.status(400).json({ "result": "Database Error" });
                 }
+                
+                const adminCount = countResults[0].adminCount;
+                
+                // ກວດສອບວ່າພະນັກງານທີ່ຈະລຶບເປັນ admin ຫຼື ບໍ່
+                connection_final.query(
+                    'SELECT status FROM employee WHERE emp_id = ?',
+                    [emp_id],
+                    (err, empResults) => {
+                        if (err) {
+                            console.log("Error checking employee status", err);
+                            return res.status(400).json({ "result": "Database Error" });
+                        }
+                        
+                        if (empResults.length === 0) {
+                            return res.status(404).json({ "result": "Employee Not Found" });
+                        }
+                        
+                        const isAdmin = empResults[0].status === 'Admin';
+                        
+                        // ຖ້າເປັນ admin ຄົນດຽວໃນລະບົບ, ບໍ່ອະນຸຍາດໃຫ້ລຶບ
+                        if (isAdmin && adminCount <= 1) {
+                            return res.status(400).json({ 
+                                "result": "Cannot delete the only admin account. The system must have at least one active admin." 
+                            });
+                        }
+                        
+                        // ດຳເນີນການລຶບຂໍ້ມູນ
+                        connection_final.query(
+                            'DELETE FROM employee WHERE emp_id = ?',
+                            [emp_id],
+                            (err, results) => {
+                                if (err) {
+                                    console.log("Error deleting employee", err);
+                                    return res.status(400).json({ "result": "Database Error" });
+                                }
 
-                if (results.affectedRows === 0) {
-                    return res.status(404).json({ "result": "Village Not Found" });
-                }
+                                if (results.affectedRows === 0) {
+                                    return res.status(404).json({ "result": "Employee Not Found" });
+                                }
 
-                res.status(200).json({
-                    "result_code": "200",
-                    "result": "Delete Employee Success",
-                    "affected_rows": results.affectedRows,
-                });
+                                res.status(200).json({
+                                    "result_code": "200",
+                                    "result": "Delete Employee Success",
+                                    "affected_rows": results.affectedRows,
+                                });
+                            }
+                        );
+                    }
+                );
             }
-        );
+        );        
     } catch (err) {
         console.log(err);
         return res.status(500).json({ "result": "Server Error" });
     }
 };
 
-
-
+// ເຂົ້າສູ່ລະບົບ
 exports.login_employee = async (req, res, next) => {
     const { username, password } = req.body;
 
@@ -335,13 +365,23 @@ exports.login_employee = async (req, res, next) => {
 
             const user = results[0];
 
-            // ตรวจสอบว่า account นี้ถูกเปิดใช้งานหรือไม่
+            // ຕັ້ງຄ່າບົດບາດຕາມ status
+            let role = 'user'; // ຄ່າເລີ່ມຕົ້ນ
+            if (user.status === 'Admin') {
+                role = 'admin';
+            } else if (user.status === 'User1') {
+                role = 'sales';
+            } else if (user.status === 'User2') {
+                role = 'warehouse';
+            }
+
+            // ຕວດສອບວ່າ account ນີ້ຖືກເປີດໃຊ້ງານຫຼືບໍ່
             if (user.active !== 1) {
                 console.log("Account inactive:", username);
                 return res.status(403).json({ result: "This account is inactive" });
             }
 
-            // เปรียบเทียบรหัสผ่านที่กรอกกับรหัสผ่านที่เก็บไว้ในฐานข้อมูล
+            // ປຽບທຽບລະຫັດຜ່ານທີ່ກອກກັບລະຫັດຜ່ານທີ່ເກັບໃນຖານຂໍ້ມູນ
             console.log("Entered password:", password);
             console.log("Stored hashed password:", user.password);
 
@@ -353,7 +393,7 @@ exports.login_employee = async (req, res, next) => {
                 return res.status(401).json({ result: "Invalid username or password" });
             }
 
-            // ถ้าทุกอย่างถูกต้อง ส่งข้อมูลกลับ
+            // ຖ້າຖືກຕ້ອງ, ສົ່ງຂໍ້ມູນກັບ
             res.status(200).json({
                 result_code: "200",
                 result: "Login successful",
@@ -362,7 +402,8 @@ exports.login_employee = async (req, res, next) => {
                     emp_name: user.emp_name,
                     emp_lname: user.emp_lname,
                     status: user.status,
-                    active: user.active
+                    active: user.active,
+                    role: role // ເພີ່ມຂໍ້ມູນບົດບາດ
                 }
             });
         });
@@ -371,13 +412,3 @@ exports.login_employee = async (req, res, next) => {
         res.status(500).json({ result: "Server Error" });
     }
 };
-
-
-
-    
-
-
-// const plaintext = '9999'; // สมมุติรหัสที่คุณกรอก
-// const hashed = '$2b$10$VkckeSXOn6C6v/Snct'; // คัดลอกจากฐานข้อมูล
-
-// bcrypt.compare(plaintext, hashed).then(console.log); // true หรือ false
